@@ -24,6 +24,7 @@ use esp_radio::wifi::{
     sta_state,
 };
 use static_cell::StaticCell;
+use esp32_http_servo::http_server::http_server_task;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -75,7 +76,7 @@ async fn main(spawner: Spawner) -> ! {
     let (stack, runner) = embassy_net::new(
         wifi_interface,
         net_config,
-        mk_static!(StackResources<3>, StackResources::<3>::new()),
+        mk_static!(StackResources<5>, StackResources::<5>::new()),
         seed,
     );
 
@@ -101,6 +102,9 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     println!("WiFi connected successfully!");
+
+    // Spawn HTTP server
+    spawner.spawn(http_server_task(stack)).ok();
 
     // Main loop
     loop {

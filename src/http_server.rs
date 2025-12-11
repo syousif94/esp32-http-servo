@@ -1,0 +1,107 @@
+use embassy_net::tcp::TcpSocket;
+use embassy_net::Stack;
+use embassy_time::Duration;
+use esp_println::println;
+
+/// Buffer sizes for HTTP server
+const RX_BUFFER_SIZE: usize = 1024;
+const TX_BUFFER_SIZE: usize = 1024;
+
+/// Simple HTTP response builder
+fn build_response(status: &str, content_type: &str, body: &str) -> alloc::string::String {
+    alloc::format!(
+        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status,
+        content_type,
+        body.len(),
+        body
+    )
+}
+
+/// Parse the HTTP request and extract the method and path
+fn parse_request(request: &str) -> Option<(&str, &str)> {
+    let first_line = request.lines().next()?;
+    let mut parts = first_line.split_whitespace();
+    let method = parts.next()?;
+    let path = parts.next()?;
+    Some((method, path))
+}
+
+/// Handle an incoming HTTP request and return a response
+fn handle_request(request: &str) -> alloc::string::String {
+    let Some((method, path)) = parse_request(request) else {
+        return build_response("400 Bad Request", "text/plain", "Bad Request");
+    };
+
+    println!("HTTP {} {}", method, path);
+
+    match (method, path) {
+        ("GET", "/") => {
+            let body = r#"{"status": "ok", "message": "ESP32 HTTP Server"}"#;
+            build_response("200 OK", "application/json", body)
+        }
+        ("GET", "/health") => {
+            let body = r#"{"healthy": true}"#;
+            build_response("200 OK", "application/json", body)
+        }
+        ("GET", _) => {
+            let body = r#"{"error": "Not Found"}"#;
+            build_response("404 Not Found", "application/json", body)
+        }
+        _ => {
+            let body = r#"{"error": "Method Not Allowed"}"#;
+            build_response("405 Method Not Allowed", "application/json", body)
+        }
+    }
+}
+
+/// Run the HTTP server on port 80
+#[embassy_executor::task]
+pub async fn http_server_task(stack: Stack<'static>) {
+    let mut rx_buffer = [0u8; RX_BUFFER_SIZE];
+    let mut tx_buffer = [0u8; TX_BUFFER_SIZE];
+
+    loop {
+        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+        socket.set_timeout(Some(Duration::from_secs(10)));
+
+        println!("HTTP server listening on port 80...");
+
+        if let Err(e) = socket.accept(80).await {
+            println!("Accept error: {:?}", e);
+            continue;
+        }
+
+        println!("Client connected");
+
+        let mut buf = [0u8; RX_BUFFER_SIZE];
+        match socket.read(&mut buf).await {
+            Ok(0) => {
+                println!("Client disconnected");
+            }
+            Ok(n) => {
+                if let Ok(request) = core::str::from_utf8(&buf[..n]) {
+                    let response = handle_request(request);
+                    let mut offset = 0;
+                    let bytes = response.as_bytes();
+                    while offset < bytes.len() {
+                        match socket.write(&bytes[offset..]).await {
+                            Ok(written) => offset += written,
+                            Err(e) => {
+                                println!("Write error: {:?}", e);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Read error: {:?}", e);
+            }
+        }
+
+        socket.close();
+        // Small delay before accepting next connection
+        embassy_time::Timer::after(Duration::from_millis(100)).await;
+    }
+}
