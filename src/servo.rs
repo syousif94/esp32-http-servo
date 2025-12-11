@@ -1,7 +1,7 @@
 use esp_hal::ledc::{
     channel::{self, ChannelIFace},
     timer::{self, TimerIFace, config::Duty},
-    Ledc, LowSpeed,
+    Ledc, HighSpeed,
 };
 use esp_hal::gpio::{DriveMode, interconnect::PeripheralOutput};
 use esp_println::println;
@@ -22,16 +22,16 @@ const PERIOD_US: u32 = 1_000_000 / SERVO_FREQ_HZ;
 
 /// Servo controller using LEDC PWM
 pub struct ServoController<'d> {
-    channel: channel::Channel<'d, LowSpeed>,
+    channel: channel::Channel<'d, HighSpeed>,
 }
 
 impl<'d> ServoController<'d> {
     /// Create a new servo controller
     pub fn new<P: PeripheralOutput<'d>>(
-        timer: &'d timer::Timer<'d, LowSpeed>,
+        timer: &'d timer::Timer<'d, HighSpeed>,
         pin: P,
     ) -> Self {
-        println!("Initializing servo controller");
+        println!("Initializing servo controller (HighSpeed LEDC)");
         println!("  PWM frequency: {} Hz", SERVO_FREQ_HZ);
         println!("  Period: {} us", PERIOD_US);
         println!("  Pulse range: {} - {} us", MIN_PULSE_US, MAX_PULSE_US);
@@ -62,12 +62,12 @@ impl<'d> ServoController<'d> {
     }
 }
 
-/// Initialize LEDC timer for servo control
-pub fn init_servo_timer<'d>(ledc: &'d Ledc<'d>) -> timer::Timer<'d, LowSpeed> {
-    let mut timer = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+/// Initialize LEDC timer for servo control (HighSpeed for better precision)
+pub fn init_servo_timer<'d>(ledc: &'d Ledc<'d>) -> timer::Timer<'d, HighSpeed> {
+    let mut timer = ledc.timer::<HighSpeed>(timer::Number::Timer0);
     timer.configure(timer::config::Config {
         duty: Duty::Duty14Bit,
-        clock_source: timer::LSClockSource::APBClk,
+        clock_source: timer::HSClockSource::APBClk,
         frequency: esp_hal::time::Rate::from_hz(SERVO_FREQ_HZ),
     }).unwrap();
     timer

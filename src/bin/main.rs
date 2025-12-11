@@ -54,17 +54,17 @@ async fn main(spawner: Spawner) -> ! {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
 
-    // Initialize LEDC for servo PWM control on GPIO5 (D5)
+    // Initialize LEDC for servo PWM control on GPIO18
     let ledc = mk_static!(Ledc<'static>, Ledc::new(peripherals.LEDC));
     let servo_timer = mk_static!(
-        esp_hal::ledc::timer::Timer<'static, esp_hal::ledc::LowSpeed>,
+        esp_hal::ledc::timer::Timer<'static, esp_hal::ledc::HighSpeed>,
         init_servo_timer(ledc)
     );
-    let mut servo = ServoController::new(servo_timer, peripherals.GPIO5);
+    let mut servo = ServoController::new(servo_timer, peripherals.GPIO18);
     
     // Set initial position to center (90 degrees)
     servo.set_angle(90);
-    println!("Servo initialized on GPIO5 at 90 degrees");
+    println!("Servo initialized on GPIO18 at 90 degrees");
 
     // Initialize esp-radio controller
     let esp_radio_controller = mk_static!(esp_radio::Controller<'static>, esp_radio::init().unwrap());
