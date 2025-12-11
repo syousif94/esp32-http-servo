@@ -10,6 +10,7 @@ use esp_alloc as _;
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
+    ledc::Ledc,
     rng::Rng,
     timer::timg::TimerGroup,
 };
@@ -24,7 +25,8 @@ use esp_radio::wifi::{
     sta_state,
 };
 use static_cell::StaticCell;
-use esp32_http_servo::http_server::http_server_task;
+use esp32_http_servo::http_server::{http_server_task, SERVO_ANGLE};
+use esp32_http_servo::servo::{ServoController, init_servo_timer};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -51,6 +53,18 @@ async fn main(spawner: Spawner) -> ! {
     // Initialize timer and software interrupt for esp-rtos
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
+
+    // Initialize LEDC for servo PWM control on GPIO5 (D5)
+    let ledc = mk_static!(Ledc<'static>, Ledc::new(peripherals.LEDC));
+    let servo_timer = mk_static!(
+        esp_hal::ledc::timer::Timer<'static, esp_hal::ledc::LowSpeed>,
+        init_servo_timer(ledc)
+    );
+    let mut servo = ServoController::new(servo_timer, peripherals.GPIO5);
+    
+    // Set initial position to center (90 degrees)
+    servo.set_angle(90);
+    println!("Servo initialized on GPIO5 at 90 degrees");
 
     // Initialize esp-radio controller
     let esp_radio_controller = mk_static!(esp_radio::Controller<'static>, esp_radio::init().unwrap());
@@ -106,12 +120,12 @@ async fn main(spawner: Spawner) -> ! {
     // Spawn HTTP server
     spawner.spawn(http_server_task(stack)).ok();
 
-    // Main loop
+    // Main loop - handle servo angle updates from HTTP requests
     loop {
-        Timer::after(Duration::from_secs(5)).await;
-        if let Some(config) = stack.config_v4() {
-            println!("Current IP: {}", config.address);
-        }
+        // Wait for a new angle signal from the HTTP server
+        let angle = SERVO_ANGLE.wait().await;
+        servo.set_angle(angle);
+        println!("Servo moved to {} degrees", angle);
     }
 }
 

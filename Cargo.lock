@@ -778,6 +778,7 @@ dependencies = [
  "critical-section",
  "embassy-executor",
  "embassy-net",
+ "embassy-sync 0.7.2",
  "embassy-time",
  "esp-alloc",
  "esp-backtrace",

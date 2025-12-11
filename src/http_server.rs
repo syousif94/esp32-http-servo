@@ -2,10 +2,15 @@ use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
 use embassy_time::Duration;
 use esp_println::println;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 
 /// Buffer sizes for HTTP server
 const RX_BUFFER_SIZE: usize = 1024;
 const TX_BUFFER_SIZE: usize = 1024;
+
+/// Signal for servo angle updates
+pub static SERVO_ANGLE: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 
 /// Simple HTTP response builder
 fn build_response(status: &str, content_type: &str, body: &str) -> alloc::string::String {
@@ -27,6 +32,25 @@ fn parse_request(request: &str) -> Option<(&str, &str)> {
     Some((method, path))
 }
 
+/// Parse angle from path like /servo/90 or /servo?angle=90
+fn parse_servo_angle(path: &str) -> Option<u8> {
+    // Try path format: /servo/90
+    if let Some(angle_str) = path.strip_prefix("/servo/") {
+        return angle_str.parse().ok();
+    }
+    
+    // Try query format: /servo?angle=90
+    if path.starts_with("/servo?") || path.starts_with("/servo?") {
+        for part in path.split('?').nth(1)?.split('&') {
+            if let Some(value) = part.strip_prefix("angle=") {
+                return value.parse().ok();
+            }
+        }
+    }
+    
+    None
+}
+
 /// Handle an incoming HTTP request and return a response
 fn handle_request(request: &str) -> alloc::string::String {
     let Some((method, path)) = parse_request(request) else {
@@ -35,18 +59,32 @@ fn handle_request(request: &str) -> alloc::string::String {
 
     println!("HTTP {} {}", method, path);
 
-    match (method, path) {
-        ("GET", "/") => {
-            let body = r#"{"status": "ok", "message": "ESP32 HTTP Server"}"#;
-            build_response("200 OK", "application/json", body)
-        }
-        ("GET", "/health") => {
-            let body = r#"{"healthy": true}"#;
-            build_response("200 OK", "application/json", body)
-        }
-        ("GET", _) => {
-            let body = r#"{"error": "Not Found"}"#;
-            build_response("404 Not Found", "application/json", body)
+    match method {
+        "GET" => {
+            if path == "/" {
+                let body = r#"{"status": "ok", "message": "ESP32 Servo Controller", "endpoints": ["/servo/<angle>", "/servo?angle=<0-180>"]}"#;
+                build_response("200 OK", "application/json", body)
+            } else if path == "/health" {
+                let body = r#"{"healthy": true}"#;
+                build_response("200 OK", "application/json", body)
+            } else if path.starts_with("/servo") {
+                if let Some(angle) = parse_servo_angle(path) {
+                    if angle <= 180 {
+                        SERVO_ANGLE.signal(angle);
+                        let body = alloc::format!(r#"{{"angle": {}}}"#, angle);
+                        build_response("200 OK", "application/json", &body)
+                    } else {
+                        let body = r#"{"error": "Angle must be between 0 and 180"}"#;
+                        build_response("400 Bad Request", "application/json", body)
+                    }
+                } else {
+                    let body = r#"{"error": "Missing or invalid angle parameter. Use /servo/90 or /servo?angle=90"}"#;
+                    build_response("400 Bad Request", "application/json", body)
+                }
+            } else {
+                let body = r#"{"error": "Not Found"}"#;
+                build_response("404 Not Found", "application/json", body)
+            }
         }
         _ => {
             let body = r#"{"error": "Method Not Allowed"}"#;
