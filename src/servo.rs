@@ -1,5 +1,5 @@
 use esp_hal::ledc::{
-    channel::{self, ChannelIFace},
+    channel::{self, ChannelIFace, ChannelHW},
     timer::{self, TimerIFace, config::Duty},
     Ledc, HighSpeed,
 };
@@ -19,6 +19,9 @@ const MAX_PULSE_US: u32 = 2500;
 
 /// Period in microseconds (1/50Hz = 20000us)
 const PERIOD_US: u32 = 1_000_000 / SERVO_FREQ_HZ;
+
+/// Duty resolution (14-bit = 16384 steps)
+const DUTY_RESOLUTION: u32 = 16384;
 
 /// Servo controller using LEDC PWM
 pub struct ServoController<'d> {
@@ -53,16 +56,15 @@ impl<'d> ServoController<'d> {
         // Calculate pulse width for the given angle
         let pulse_us = MIN_PULSE_US + ((MAX_PULSE_US - MIN_PULSE_US) * angle as u32) / 180;
         
-        // Convert pulse width to duty percentage (0-100)
-        let duty_pct = ((pulse_us * 100) / PERIOD_US) as u8;
+        // Convert pulse width to raw duty value (0-16383 for 14-bit resolution)
+        // duty = (pulse_us / period_us) * max_duty
+        let duty_raw = (pulse_us * DUTY_RESOLUTION) / PERIOD_US;
         
-        println!("Servo: angle={}° pulse={}us duty={}%", angle, pulse_us, duty_pct);
+        println!("Servo: angle={}° pulse={}us duty_raw={}/{}", angle, pulse_us, duty_raw, DUTY_RESOLUTION);
         
-        self.channel.set_duty(duty_pct).unwrap();
+        self.channel.set_duty_hw(duty_raw);
     }
 }
-
-/// Initialize LEDC timer for servo control (HighSpeed for better precision)
 pub fn init_servo_timer<'d>(ledc: &'d Ledc<'d>) -> timer::Timer<'d, HighSpeed> {
     let mut timer = ledc.timer::<HighSpeed>(timer::Number::Timer0);
     timer.configure(timer::config::Config {
