@@ -6,6 +6,7 @@ extern crate alloc;
 use embassy_executor::Spawner;
 use embassy_net::{Runner, StackResources};
 use embassy_time::{Duration, Timer};
+use embassy_futures::select::{select, Either};
 use esp_alloc as _;
 use esp_backtrace as _;
 use esp_hal::{
@@ -13,6 +14,7 @@ use esp_hal::{
     ledc::Ledc,
     rng::Rng,
     timer::timg::TimerGroup,
+    uart::{Uart, Config as UartConfig},
 };
 use esp_println::println;
 use esp_radio::wifi::{
@@ -26,6 +28,7 @@ use esp_radio::wifi::{
 };
 use static_cell::StaticCell;
 use esp32_http_servo::http_server::{http_server_task, SERVO_ANGLE};
+use esp32_http_servo::serial_cmd::{serial_input_task, SERIAL_SERVO_ANGLE};
 use esp32_http_servo::servo::{ServoController, init_servo_timer};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -53,6 +56,15 @@ async fn main(spawner: Spawner) -> ! {
     // Initialize timer and software interrupt for esp-rtos
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
+
+    // Initialize UART for serial commands (uses USB-serial on most dev boards)
+    let uart0 = Uart::new(
+        peripherals.UART0,
+        UartConfig::default(),
+    ).unwrap();
+    
+    // Spawn serial command task
+    spawner.spawn(serial_input_task(uart0)).ok();
 
     // Initialize LEDC for servo PWM control on GPIO18
     let ledc = mk_static!(Ledc<'static>, Ledc::new(peripherals.LEDC));
@@ -120,10 +132,13 @@ async fn main(spawner: Spawner) -> ! {
     // Spawn HTTP server
     spawner.spawn(http_server_task(stack)).ok();
 
-    // Main loop - handle servo angle updates from HTTP requests
+    // Main loop - handle servo angle updates from HTTP or serial
     loop {
-        // Wait for a new angle signal from the HTTP server
-        let angle = SERVO_ANGLE.wait().await;
+        // Wait for angle signal from either HTTP or serial
+        let angle = match select(SERVO_ANGLE.wait(), SERIAL_SERVO_ANGLE.wait()).await {
+            Either::First(angle) => angle,
+            Either::Second(angle) => angle,
+        };
         servo.set_angle(angle);
         println!("Servo moved to {} degrees", angle);
     }
